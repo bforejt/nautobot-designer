@@ -1,6 +1,6 @@
-# nautobot-designer
+# nautobot-design-template-factory
 
-Tooling to generate a full set of inter-related Nautobot components (locations, racks, devices, interfaces, cables, IPAM) with minimal user input, using an existing fully-built location as the template.
+Capture an existing, fully-built Nautobot location and turn it into a parameterized Design Builder template — so new sites (locations, racks, devices, interfaces, cables, IPAM) can be deployed with minimal user input and nobody ever hand-authors design YAML.
 
 ## Status
 
@@ -12,4 +12,4 @@ Supporting research (adversarially fact-checked against primary sources, July 20
 
 ## Background
 
-NTC's [Design Builder](https://github.com/nautobot/nautobot-app-design-builder) app is the incumbent framework for declarative Nautobot designs, but hand-authoring its YAML is difficult enough that adoption has been zero. This project uses an existing golden site as the template instead, with the Design Builder framework as an optional execution backend rather than an authoring requirement.
+NTC's [Design Builder](https://github.com/nautobot/nautobot-app-design-builder) app is the incumbent framework for declarative Nautobot designs, but hand-authoring its YAML is difficult enough that adoption has been zero. This project generates those designs from an existing golden site instead: a capture job walks the site into a versioned site-spec, a reviewed parameter map defines what varies per site, and a renderer emits a ready-to-run Design Builder design package. Design Builder remains the deployment engine.
