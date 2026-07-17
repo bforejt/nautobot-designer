@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nautobot-design-template-factory"
+version = "0.1.0"
+description = "Capture an existing Nautobot site and render it as a parameterized Design Builder design package"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0",
+    "Jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+# Installed inside the Nautobot environment (e.g. composer image) so the
+# capture job can import the library. Nautobot itself is deliberately NOT a
+# dependency of the library: everything under design_template_factory/ is
+# pure Python; only jobs/ touches the ORM.
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+dtf = "design_template_factory.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["design_template_factory*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

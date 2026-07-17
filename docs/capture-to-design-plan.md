@@ -84,13 +84,15 @@ Two schema notes forced by the target engine:
 - **Component `removals` are captured but v1 cannot replay them** — Design Builder's action vocabulary (`!get/!create/!update/!create_or_update`) has no delete verb. v1 policy: lint-flag removals loudly at capture and at render (in the generated README), and exclude them from the round-trip diff. If they matter in practice, the fix is a small custom `AttributeExtension` (the extensions API supports commit/rollback hooks) — deferred until a real template needs it.
 - **Template drift guard:** `_references` existence checks aren't enough for DeviceTypes — templates edited after capture change what `Device.save()` auto-creates, breaking `!update`-by-name entries and the round-trip diff. Each DeviceType reference carries a fingerprint (hash of its component templates); the generated design's validation compares it at deploy time, and a mismatch means re-capture.
 
+Implementation notes (v1, post-review): skipped-object reporting lives in `_meta.lint` (no separate `skipped` list); the blessed parameter map lives beside the spec in git (`param-map.yaml`) with `_parameters` reserved; and locations are keyed by root-relative `path`, because location names are only unique per parent.
+
 Why the spec exists even though the target is Design Builder: parameterization operates on structured data (not YAML text); the round-trip diff (Stage 5) compares specs; Jinja-injection escaping is applied at render, not entangled with capture; and it keeps every future render target (Option B materializer, docs, diagrams) open. Shaping it design-dict-like makes Stage 3 mostly a projection rather than a transformation (verified: designs are plain dicts with quoted-string action tags — F1).
 
 ### 3.2 Parameter map (Stage 2 output — the human "intent" file)
 
 Small reviewed YAML in git. This is the renaming/renumbering policy every ecosystem's prior art says cannot be inferred (netbox#1994, Terraform) — so we don't infer it; we **propose** it mechanically and have a human confirm it (~15-minute review, not authoring):
 
-- **Seeds** (deploy-time form inputs, fixed contract from Phase 0): `site_code`, `site_name`, `parent_location`, `supernet_map` (source supernet → target supernet, shared-namespace re-prefix), `vlan_policy`.
+- **Seeds** (deploy-time form inputs, fixed contract from Phase 0): `site_code`, `site_name`, `parent_location`, `supernet_map` (source supernet → target supernet, shared-namespace re-prefix). v1 fixes VLAN policy to "keep source VIDs" — a `vlan_policy` seed is deferred until a real template needs re-numbering.
 - The review is mechanical-first, human-confirmed. Expect the *first* capture of a tier to take real engineering attention (pattern-detection misses, cross-site edge decisions); subsequent re-captures of the same tier should be a quick diff review.
 - **Derived rules** (proposed by scanning the capture): device/rack name patterns (detected source-site-code substrings → `{{ site_code }}`), IP rewriting by supernet offset (`new_host = new_base + (old_host − old_base)`, prefix lengths preserved), VLAN group `{{ site_code }}-vlans` (required — VLANGroup names are globally unique), primary IPs follow the IP map automatically.
 - **Verbatim:** device_type/role/platform/status/tenant references, rack elevations, interface configs, cable topology, local config context (optionally with site variables substituted).
@@ -126,7 +128,9 @@ Generated design mechanics — **verified mechanisms** (from Design Builder sour
 - `primary_ip4/6` via the second-pass pattern: device → interfaces → IP assignment → deferred/`!update` primary-IP set, matching `Device.clean()`'s requirement.
 - **`!update` entries for template-born components** carrying only captured overrides, `!create_or_update` for non-template additions — never re-creating what DeviceType templates auto-instantiate.
 - `IPAddressToInterface` through-rows with non-default role flags (`is_primary`, `is_secondary`…) — the design syntax for through-model creation is unverified.
-- Namespace pinning on generated Prefixes/IPs (parent-prefix auto-resolution is per-namespace; the syntax to pin non-default namespaces needs confirmation).
+- Namespace pinning on generated Prefixes/IPs (parent-prefix auto-resolution is per-namespace; the renderer pins parents via explicit `!ref`s, which needs confirmation).
+- The site-root location's parent lookup by pk dict form (`parent: {id: <ObjectVar pk>}`).
+- `!connect_cable` payloads carrying cable `type`/`label`, and cross-family endpoints (console port → console server port) where the `to:` query has no termination-model discriminator.
 
 **Open engineering question #1 — the per-model identifier scheme (the most load-bearing unverified mechanism):**
 
@@ -191,7 +195,7 @@ Generated context-class `validate_*` methods carry the pre-flight burden, becaus
 
 *Entry condition:* Brian's NTC roadmap inquiry (Phase 0 #7) answered or timed out — building what the vendor is about to ship remains the worst outcome.
 
-1. Stand up composer 3.x stack; build a small but complete golden site via a **deterministic factory script** (2 racks, 4 devices, cabled + powered, prefixes/VLANs/IPs, primary IPs), deliberately seeded with the hostile cases: a rack whose name contains no site code, a group-less VLAN, an interface IP with non-default role flags, IPs in a non-default namespace, a custom-field value and a RelationshipAssociation, a device with a template-born component *removed*, and a description containing `{{ malicious }}`.
+1. Stand up composer 3.x stack; build a small but complete golden site via a **deterministic factory script** (2 racks, 4 devices, cabled + powered, prefixes/VLANs/IPs, primary IPs), deliberately seeded with the hostile cases: a rack whose name contains no site code, a group-less VLAN, an interface IP with non-default role flags, IPs in a non-default namespace, a custom-field value and a RelationshipAssociation, a device with a template-born component *removed*, a cross-family (console) cable, separator-variant component names (`Ethernet1/1` vs `Ethernet1.1`), and a description containing `{{ malicious }}`. (Implemented: `fixtures/build_fixture_site.py` — console cable and separator-variant names still TODO there.)
 2. **Hand-write** the design YAML for that site (what the generator will eventually emit): candidate identifier schemes per model (open question #1), `!connect_cable` with status/type/label and a power-feed termination, deferred primary IPs, `!update` on template-born interfaces, IP-assignment role flags, namespace pinning. Deploy it to a new location. This settles every inferred pattern before a line of generator code exists (gate #2).
 3. **Deploy the same design a second time** as another "site" (different code/supernets): both must coexist, which is what exposes identifier-collision failures (gate #3).
 4. **Re-capture the source golden site** and diff against its original spec: must be ∅ — proves deployments didn't silently mutate source objects via bad lookups (gate #4).
