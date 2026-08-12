@@ -1,6 +1,6 @@
 # Implementation Approach: Design Builder vs. Custom AI-Maintained Jobs
 
-**Status:** Recommendation — awaiting Brian's sign-off. If accepted, this supersedes the engine choice in [capture-to-design-plan.md](capture-to-design-plan.md) (the pipeline's verification stages survive; the Design Builder render/deploy stages do not).
+**Status:** **Approved (Brian, 2026-08-11).** Supersedes the engine choice in [capture-to-design-plan.md](capture-to-design-plan.md): the pipeline's verification stages survive; the Design Builder render/deploy stages do not. The winning architecture (§3) is the build plan of record.
 **Date:** 2026-08-11
 **Method:** Structured adversarial debate — three steelman advocates (custom jobs / Design Builder / spec-hybrid), a full cross-examination round with mandatory concessions, then three independent judges (5-year maintainability, operational safety & governance, delivery velocity) scoring eight criteria, instructed to spot-check every citation against the repo's verified research and live upstream source. Full record: [research/implementation-debate.md](research/implementation-debate.md).
 

@@ -4,9 +4,9 @@ Capture an existing, fully-built Nautobot location and turn it into a parameteri
 
 ## Status
 
-**Strategy locked (2026-07-15): capture-to-design.** We build the template-capture side only; Design Builder is the deployment engine. Pipeline and build plan: [docs/capture-to-design-plan.md](docs/capture-to-design-plan.md).
+**Strategy (approved 2026-08-11): authored standard, direct-ORM deployment.** Per-tier site specs (authored, schema-validated) are deployed by a shared ORM materialization library behind thin per-tier Nautobot Jobs; the capture walker serves as the round-trip verifier. Design Builder is off the critical path. Decision record: [docs/implementation-approach-decision.md](docs/implementation-approach-decision.md).
 
-Prior steps: [options analysis](docs/options-analysis.md) · [Phase 0 decisions](docs/phase0-decisions.md).
+Prior steps: [options analysis](docs/options-analysis.md) · [Phase 0 decisions](docs/phase0-decisions.md) · [capture-to-design plan (superseded)](docs/capture-to-design-plan.md).
 
 Supporting research (adversarially fact-checked against primary sources, July 2026) lives in [docs/research/](docs/research/).
 

@@ -1,5 +1,7 @@
 # Capture-to-Design: Locked Strategy and Pipeline Plan
 
+> **SUPERSEDED (2026-08-11):** the Design Builder render/deploy stages of this plan were retired by the approved [implementation-approach decision](implementation-approach-decision.md) — the standard is now authored (not captured) and deployed by a shared direct-ORM materialization library. The verification stages (spec, walker-as-verifier, round-trip acceptance, guardrails, lab methodology) carry forward unchanged.
+
 **Status:** Strategy locked (Brian, 2026-07-15)
 **Supersedes:** the Option-B-first recommendation in [options-analysis.md](options-analysis.md) §5 — see "What changed and why" below.
 **Grounding:** every mechanism referenced here was verified in the Step-1 research ([docs/research/](research/)); Design Builder specifics cite its source/issues as of v3.1.1 (June 2026), targeting Nautobot 3.x per [Phase 0](phase0-decisions.md).
