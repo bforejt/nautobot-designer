@@ -1,0 +1,16 @@
+schema: '1.0'
+template:
+  id: branch-small
+  source_site_code: DAL01
+supernets:
+- seed: supernet_1
+  source: 10.10.0.0/16
+  description: Replaces source supernet 10.10.0.0/16
+rules:
+  name_patterns:
+  - pattern: (?i)DAL01
+    replace: '{{ site_code }}'
+  vlan_group_name: '{{ site_code }}-vlans'
+  drop_custom_fields: []
+notes:
+- Example template derived from the lab fixture site (fixtures/build_fixture_site.py).

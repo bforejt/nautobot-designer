@@ -1,14 +1,12 @@
 import pytest
 
-from design_template_factory.escape import Placeholder, escape_literal, escape_tree
 from design_template_factory.rewrite import (
     RewriteError,
-    address_offset_expr,
-    apply_name_patterns,
     compute_roots,
     find_root,
-    is_site_coded,
-    network_offset_expr,
+    rebase_address,
+    rebase_network,
+    resolve_name,
 )
 from design_template_factory.spec import SiteSpec, SpecError
 
@@ -38,55 +36,41 @@ class TestSpec:
         problems = SiteSpec.from_dict(spec_dict).validate()
         assert any("GHOST" in p for p in problems)
 
-    def test_missing_fingerprint_detected(self, spec_dict):
-        del spec_dict["_references"]["device_types"][0]["template_fingerprint"]
+    def test_unknown_location_path_detected(self, spec_dict):
+        spec_dict["racks"][0]["location"] = "DAL01/Basement"
         problems = SiteSpec.from_dict(spec_dict).validate()
-        assert any("fingerprint" in p for p in problems)
-
-
-class TestEscape:
-    def test_literal_delimiters_neutralized(self):
-        escaped = escape_literal("boom {{ malicious }} {% tag %} {# c #}")
-        assert "{{ '{{' }}" in escaped
-        assert "{{ '{%' }}" in escaped
-        assert "{{ '{#' }}" in escaped
-
-    def test_placeholder_untouched(self):
-        assert escape_literal(Placeholder("{{ site_code }}")) == "{{ site_code }}"
-
-    def test_tree_escapes_nested(self):
-        tree = escape_tree({"k": ["{{ x }}", Placeholder("{{ ok }}")]})
-        assert tree["k"][0] == "{{ '{{' }} x {{ '}}' }}"
-        assert tree["k"][1] == "{{ ok }}"
+        assert any("Basement" in p for p in problems)
 
 
 class TestRewrite:
-    def test_name_pattern_yields_placeholder(self):
-        result = apply_name_patterns("DAL01-SW1", [{"pattern": "DAL01", "replace": "{{ site_code }}"}])
-        assert isinstance(result, Placeholder)
-        assert result == "{{ site_code }}-SW1"
-        assert is_site_coded(result)
+    PATTERNS = [{"pattern": "(?i)DAL01", "replace": "{{ site_code }}"}]
 
-    def test_unmatched_name_is_plain(self):
-        result = apply_name_patterns("R2", [{"pattern": "DAL01", "replace": "{{ site_code }}"}])
-        assert not isinstance(result, Placeholder)
-        assert not is_site_coded(result)
+    def test_resolve_name_substitutes_seed(self):
+        assert resolve_name("DAL01-SW1", self.PATTERNS, "AUS01") == "AUS01-SW1"
+        assert resolve_name("dal01-r1", self.PATTERNS, "AUS01") == "AUS01-r1"
 
-    def test_network_offset_expr(self):
-        expr = network_offset_expr("10.10.20.0/24", "10.10.0.0/16", "supernet_1")
-        assert expr == "{{ supernet_1 | string | network_offset('0.0.20.0/24') }}"
+    def test_resolve_name_untouched_when_no_match(self):
+        assert resolve_name("R2", self.PATTERNS, "AUS01") == "R2"
 
-    def test_address_offset_expr(self):
-        expr = address_offset_expr("10.10.0.11/24", "10.10.0.0/16", "supernet_1")
-        assert expr == "{{ supernet_1 | string | network_offset('0.0.0.11/24') }}"
+    def test_rebase_network(self):
+        assert rebase_network("10.10.20.0/24", "10.10.0.0/16", "10.20.0.0/16") == "10.20.20.0/24"
 
-    def test_ipv6_offset(self):
-        expr = network_offset_expr("2001:db8:0:20::/64", "2001:db8::/48", "supernet_v6")
-        assert "network_offset('" in expr and expr.endswith("/64') }}")
+    def test_rebase_address(self):
+        assert rebase_address("10.10.0.11/24", "10.10.0.0/16", "10.20.0.0/16") == "10.20.0.11/24"
 
-    def test_offset_outside_root_raises(self):
+    def test_rebase_ipv6(self):
+        assert (
+            rebase_network("2001:db8:0:20::/64", "2001:db8::/48", "2001:db9::/48")
+            == "2001:db9:0:20::/64"
+        )
+
+    def test_rebase_outside_root_raises(self):
         with pytest.raises(RewriteError):
-            network_offset_expr("192.168.0.0/24", "10.0.0.0/8", "seed")
+            rebase_network("192.168.0.0/24", "10.0.0.0/8", "172.16.0.0/12")
+
+    def test_rebase_smaller_target_raises(self):
+        with pytest.raises(RewriteError, match="smaller"):
+            rebase_network("10.10.20.0/24", "10.10.0.0/16", "10.20.0.0/20")
 
     def test_find_root_most_specific(self):
         roots = ["10.0.0.0/8", "10.10.0.0/16"]
@@ -95,5 +79,6 @@ class TestRewrite:
         assert find_root("192.168.0.0/24", roots) is None
 
     def test_compute_roots(self):
-        roots = compute_roots(["10.10.0.0/24", "10.10.10.0/24", "10.10.0.0/16"])
-        assert roots == ["10.10.0.0/16"]
+        assert compute_roots(["10.10.0.0/24", "10.10.10.0/24", "10.10.0.0/16"]) == [
+            "10.10.0.0/16"
+        ]

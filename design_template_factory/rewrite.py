@@ -1,10 +1,10 @@
-"""Parameter application helpers: name patterns and IP re-prefixing.
+"""Parameter application helpers: name resolution and IP re-prefixing.
 
-Re-prefixing follows the Phase 0 decision (shared namespace, offset-preserving
-supernet map): every captured prefix/IP is expressed at render time as a
-netutils ``network_offset`` Jinja expression against the deploy-time supernet
-seed, so `new = seed_base + (old - source_base)` with prefix lengths kept.
-Design Builder's Jinja environment includes the netutils filters (verified).
+Post-decision (docs/implementation-approach-decision.md): everything here is
+pure Python evaluated at deploy time by the resolver — nothing is emitted as
+Jinja for a downstream engine anymore. Re-prefixing keeps the Phase 0 policy:
+shared namespace, offset-preserving supernet map, prefix lengths preserved
+(`new = target_base + (old - source_base)`).
 """
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ import ipaddress
 import re
 from typing import Iterable
 
-from .escape import Placeholder, escape_literal
+SITE_CODE_TOKEN = "{{ site_code }}"
+SITE_NAME_TOKEN = "{{ site_name }}"
 
 
 class RewriteError(ValueError):
@@ -21,31 +22,20 @@ class RewriteError(ValueError):
 
 
 # --------------------------------------------------------------------- names
-def apply_name_patterns(name: str, patterns: Iterable[dict]) -> str | Placeholder:
-    """Apply parameter-map name patterns; Placeholder when a rewrite occurred.
+def resolve_name(name: str, patterns: Iterable[dict], site_code: str) -> str:
+    """Apply parameter-map name patterns, substituting the site-code token.
 
-    The captured name is Jinja-escaped BEFORE patterns run: the replacement
-    strings from the human-reviewed parameter map are the only trusted Jinja
-    that may enter the resulting Placeholder. Without this, a hostile source
-    name like 'DAL01-{{ malicious }}' would ride into the design unescaped
-    (the #258 injection class).
+    Parameter maps store replacements with the ``{{ site_code }}`` token for
+    continuity with captured drafts; the resolver substitutes the real seed.
     """
-    escaped = escape_literal(name)
-    rewritten = escaped
+    resolved = name
     for rule in patterns:
-        rewritten = re.sub(rule["pattern"], rule["replace"], rewritten)
-    if rewritten != escaped:
-        return Placeholder(rewritten)
-    return name
+        resolved = re.sub(rule["pattern"], rule["replace"], resolved)
+    return resolved.replace(SITE_CODE_TOKEN, site_code)
 
 
-def is_site_coded(value: str | Placeholder) -> bool:
-    """True when a rendered name embeds the site_code placeholder.
-
-    This is the global-uniqueness guarantee required before the renderer may
-    emit a ``create_or_update`` lookup for devices/racks (identity.py).
-    """
-    return isinstance(value, Placeholder) and "site_code" in value
+def resolve_tokens(value: str, site_code: str, site_name: str) -> str:
+    return value.replace(SITE_CODE_TOKEN, site_code).replace(SITE_NAME_TOKEN, site_name)
 
 
 # ------------------------------------------------------------------ networks
@@ -61,46 +51,44 @@ def find_root(network: str, roots: Iterable[str]) -> str | None:
     return str(best) if best else None
 
 
-def network_offset_expr(network: str, source_root: str, seed_var: str) -> Placeholder:
-    """Jinja expression re-basing a prefix onto the seed supernet.
-
-    ``network_offset("10.0.0.0/8", "0.0.20.0/24")`` -> ``10.0.20.0/24``; the
-    offset operand is the source value minus the source root, keeping the
-    original prefix length.
-    """
+def rebase_network(network: str, source_root: str, target_root: str) -> str:
+    """Re-base a prefix onto the target supernet, preserving host offsets."""
     net = ipaddress.ip_network(network, strict=False)
-    root = ipaddress.ip_network(source_root)
-    if not net.subnet_of(root):
+    source = ipaddress.ip_network(source_root)
+    target = ipaddress.ip_network(str(target_root))
+    if not net.subnet_of(source):
         raise RewriteError(f"{network} is not inside source supernet {source_root}")
-    delta = int(net.network_address) - int(root.network_address)
-    offset_addr = ipaddress.ip_address(delta) if net.version == 4 else ipaddress.IPv6Address(delta)
-    # `| string` coerces the IPNetworkVar (netaddr object) before netutils.
-    return Placeholder(
-        "{{ %s | string | network_offset('%s/%d') }}" % (seed_var, offset_addr, net.prefixlen)
-    )
+    if target.version != source.version:
+        raise RewriteError(f"{target_root} is IPv{target.version}; expected IPv{source.version}")
+    if target.prefixlen > source.prefixlen:
+        raise RewriteError(
+            f"target supernet {target_root} is smaller than source {source_root}"
+        )
+    delta = int(net.network_address) - int(source.network_address)
+    base = int(target.network_address) + delta
+    return f"{ipaddress.ip_address(base)}/{net.prefixlen}"
 
 
-def address_offset_expr(address: str, source_root: str, seed_var: str) -> Placeholder:
-    """Same as network_offset_expr but for a host address like 10.10.20.5/24."""
+def rebase_address(address: str, source_root: str, target_root: str) -> str:
+    """Re-base a host address like 10.10.20.5/24 onto the target supernet."""
     iface = ipaddress.ip_interface(address)
-    root = ipaddress.ip_network(source_root)
-    if iface.version != root.version or int(iface.ip) < int(
-        root.network_address
-    ) or int(iface.ip) > int(root.broadcast_address):
-        raise RewriteError(f"{address} is not inside source supernet {source_root}")
-    delta = int(iface.ip) - int(root.network_address)
-    offset_addr = ipaddress.ip_address(delta) if iface.version == 4 else ipaddress.IPv6Address(delta)
-    return Placeholder(
-        "{{ %s | string | network_offset('%s/%d') }}"
-        % (seed_var, offset_addr, iface.network.prefixlen)
-    )
+    source = ipaddress.ip_network(source_root)
+    target = ipaddress.ip_network(str(target_root))
+    if iface.version != source.version or not iface.network.subnet_of(source):
+        if int(iface.ip) < int(source.network_address) or int(iface.ip) > int(
+            source.broadcast_address
+        ):
+            raise RewriteError(f"{address} is not inside source supernet {source_root}")
+    delta = int(iface.ip) - int(source.network_address)
+    base = int(target.network_address) + delta
+    return f"{ipaddress.ip_address(base)}/{iface.network.prefixlen}"
 
 
 def compute_roots(prefixes: Iterable[str]) -> list[str]:
     """Minimal covering set: captured prefixes not contained in another one.
 
-    These become the template's supernet seeds (one deploy-time IPNetworkVar
-    each) in the proposed parameter map.
+    These become the template's supernet seeds (one deploy-time input each)
+    in the proposed parameter map.
     """
     nets = [ipaddress.ip_network(p, strict=False) for p in prefixes]
     roots: list[str] = []
@@ -110,5 +98,4 @@ def compute_roots(prefixes: Iterable[str]) -> list[str]:
             for other in nets
         ):
             roots.append(str(net))
-    # Deterministic order: version, then address.
     return sorted(set(roots), key=lambda p: (ipaddress.ip_network(p).version, ipaddress.ip_network(p)))

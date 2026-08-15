@@ -108,6 +108,16 @@ class CaptureSiteTemplate(Job):
 
         spec_json = json.dumps(spec.to_dict(), indent=2, sort_keys=False) + "\n"
         self.create_file(f"site-spec-{site_code.lower()}.json", spec_json)
+
+        from design_template_factory import params as params_mod
+
+        proposal = params_mod.propose(spec)
+        import yaml as yaml_mod
+
+        self.create_file(
+            f"param-map-{site_code.lower()}.draft.yaml",
+            yaml_mod.safe_dump(proposal.to_dict(), sort_keys=False),
+        )
         self.logger.info(
             "Spec emitted with %s objects across %s families; review the lint "
             "report, then commit the spec to the template repository and run "

@@ -5,26 +5,15 @@ Device.save() auto-instantiates components from the DeviceType's templates
 overrides to template-born components, additions, removals — never the full
 component list, or replay double-creates.
 
-Also computes the DeviceType template fingerprint used as the drift guard;
-the algorithm here MUST stay in lockstep with the copy embedded in generated
-design packages (design_template_factory/render/job.py::FINGERPRINT_SNIPPET —
-which is literally this module's fingerprint code, embedded at codegen time).
+The DeviceType template fingerprint (drift guard) is shared with deploy
+preflight via design_template_factory.fingerprint.
 """
 
 from __future__ import annotations
 
-import hashlib
-
-TEMPLATE_RELATED_NAMES = (
-    "console_port_templates",
-    "console_server_port_templates",
-    "power_port_templates",
-    "power_outlet_templates",
-    "interface_templates",
-    "rear_port_templates",
-    "front_port_templates",
-    "device_bay_templates",
-    "module_bay_templates",
+from design_template_factory.fingerprint import (  # noqa: F401  (re-export)
+    TEMPLATE_RELATED_NAMES,
+    fingerprint_device_type,
 )
 
 # component family -> (device related_name, device_type template related_name)
@@ -47,28 +36,6 @@ _TEMPLATE_DEFAULTS = {"label": "", "description": "", "mgmt_only": False, "enabl
 
 # Live-only fields: any non-default value is an override by definition.
 _INTERFACE_LIVE_FIELDS = ("enabled", "mtu", "mode")
-
-
-def fingerprint_device_type(device_type) -> str:
-    parts = []
-    for related in TEMPLATE_RELATED_NAMES:
-        manager = getattr(device_type, related, None)
-        if manager is None:
-            continue
-        for template in manager.all():
-            attrs = [
-                related,
-                template.name,
-                str(getattr(template, "type", "")),
-                str(getattr(template, "label", "") or ""),
-                str(getattr(template, "description", "") or ""),
-                str(getattr(template, "mgmt_only", "")),
-                str(getattr(template, "positions", "")),
-                str(getattr(template, "rear_port_position", "")),
-                getattr(getattr(template, "rear_port_template", None), "name", ""),
-            ]
-            parts.append(":".join(attrs))
-    return hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()
 
 
 def _template_value(template, field):
@@ -176,9 +143,8 @@ def diff_device_components(device) -> tuple[dict, list]:
                     obj=f"{device.name}",
                     message=(
                         f"{family}: {', '.join(removals)} exist on the DeviceType "
-                        "template but were removed from this device. Design Builder "
-                        "has no delete action — clones WILL have these components. "
-                        "(v1 limitation; excluded from round-trip diff.)"
+                        "template but were removed from this device; the deploy "
+                        "job replays the removal on clones"
                     ),
                 )
             )
