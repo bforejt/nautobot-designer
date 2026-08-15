@@ -59,7 +59,13 @@ namespace = Namespace.objects.get(name="Global")
 
 
 # --- Location tree -----------------------------------------------------------
-site_type, _ = LocationType.objects.get_or_create(name="Site")
+region_type, _ = LocationType.objects.get_or_create(name="Region")
+site_type, _ = LocationType.objects.get_or_create(
+    name="Site", defaults={"parent": region_type}
+)
+if site_type.parent_id is None:  # pre-existing lab type without the chain
+    site_type.parent = region_type
+    site_type.validated_save()
 floor_type, _ = LocationType.objects.get_or_create(
     name="Floor", defaults={"parent": site_type, "nestable": False}
 )
@@ -69,15 +75,22 @@ for location_type in (site_type, floor_type):
 
         location_type.content_types.add(ContentType.objects.get_for_model(model))
 
+region, _ = Location.objects.get_or_create(
+    name="South Central", location_type=region_type, defaults={"status": active}
+)
 site, _ = Location.objects.get_or_create(
     name=SITE_CODE,
     location_type=site_type,
     defaults={
         "status": active,
+        "parent": region,
         # hostile case: injection attempt in captured literal
         "description": "Golden site {{ malicious }} fixture",
     },
 )
+if site.parent_id is None:
+    site.parent = region
+    site.validated_save()
 floor, _ = Location.objects.get_or_create(
     name="Floor 1", location_type=floor_type, parent=site, defaults={"status": active}
 )
@@ -156,10 +169,11 @@ lag, _ = Interface.objects.get_or_create(
 )
 eth1 = Interface.objects.get(device=sw1, name="Ethernet1")
 eth1.description = "uplink {{ malicious }} literal"
-eth1.mode = "access"  # required when untagged_vlan is set
+eth1.mode = "tagged"  # trunk: untagged + tagged VLANs (hostile m2m case)
 eth1.untagged_vlan = vlan_users
 eth1.lag = lag
 eth1.validated_save()
+eth1.tagged_vlans.set([vlan_voice])
 
 # hostile case: custom-field value carrying Jinja delimiters
 from nautobot.extras.models import CustomField  # noqa: E402
@@ -175,7 +189,9 @@ sw1.validated_save()
 from nautobot.extras.models import Relationship, RelationshipAssociation  # noqa: E402
 
 external_site, _ = Location.objects.get_or_create(
-    name="EXT-DR-SITE", location_type=site_type, defaults={"status": active}
+    name="EXT-DR-SITE",
+    location_type=site_type,
+    defaults={"status": active, "parent": region},
 )
 relationship, _ = Relationship.objects.get_or_create(
     key="backup_site",

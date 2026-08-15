@@ -25,7 +25,7 @@ def spec_dict():
                 {
                     "manufacturer": "FixtureNet",
                     "model": "FX-48",
-                    "template_fingerprint": "f" * 64,
+                    "template_fingerprint": "",
                 }
             ],
             "namespaces": [{"name": "Global"}],
@@ -85,6 +85,7 @@ def spec_dict():
                 "rack_group": "DAL01-MDF",
                 "status": "Active",
                 "u_height": 42,
+                "width": 19,
                 "custom_fields": {},
             },
             {
@@ -93,6 +94,7 @@ def spec_dict():
                 "rack_group": "DAL01-MDF",
                 "status": "Active",
                 "u_height": 42,
+                "width": 19,
                 "custom_fields": {},
             },
         ],
@@ -104,7 +106,11 @@ def spec_dict():
                 "name": "FEED-A",
                 "power_panel": "DAL01-PP-1",
                 "status": "Active",
+                "type": "primary",
+                "supply": "ac",
+                "phase": "single-phase",
                 "voltage": 120,
+                "amperage": 20,
                 "custom_fields": {},
             }
         ],
@@ -119,12 +125,14 @@ def spec_dict():
                 "prefix": "10.10.0.0/24",
                 "namespace": "Global",
                 "status": "Active",
+                "type": "network",
                 "custom_fields": {},
             },
             {
                 "prefix": "10.10.10.0/24",
                 "namespace": "Global",
                 "status": "Active",
+                "type": "network",
                 "custom_fields": {},
             },
         ],
@@ -148,6 +156,7 @@ def spec_dict():
                             {
                                 "name": "Ethernet1",
                                 "description": "uplink {{ malicious }} literal",
+                                "mode": "tagged",
                                 "untagged_vlan": 10,
                                 "tagged_vlans": [20],
                                 "lag": "Po1",

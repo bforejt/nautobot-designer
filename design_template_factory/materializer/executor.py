@@ -6,11 +6,13 @@ The trap ledger, handled once (see docs/research/site-data-model.md):
   groups topo-sorted, prefixes before IPs, cables last);
 - devices: create (DeviceType templates auto-instantiate components) ->
   delete removals -> create additions -> apply overrides -> link pass
-  (lag / rear_port) -> IP assignment -> deferred primary-IP write;
+  (lag) -> IP assignment -> deferred primary-IP write; front-port
+  rear_port links are set at creation (mandatory FK);
 - cables: check-before-create on endpoint occupancy; generic FKs directly
   (cross-family console cabling is just a write here);
-- every created object (components included) is stamped via the
-  `provisioned_from` custom field;
+- every teardown-relevant object is stamped via the `provisioned_from`
+  custom field (components and through-rows cascade with their device and
+  are deliberately NOT stamped);
 - one @transaction.atomic; dry-run = deliberate rollback.
 
 Everything uses validated_save() (never bare save/bulk_create), per the
@@ -140,7 +142,10 @@ class Executor:
                 remaining.remove(entry)
                 progressed = True
             if not progressed:
-                raise ExecutionError(f"rack_group parent cycle: {[e['name'] for e in remaining]}")
+                raise ExecutionError(
+                    "rack_group parent missing from plan or cyclic: "
+                    f"{[e['name'] for e in remaining]}"
+                )
 
     def _create_racks(self) -> None:
         from nautobot.dcim.models import Rack
@@ -201,6 +206,10 @@ class Executor:
                 status=self._status(entry["status"]),
                 description=entry.get("description") or "",
             )
+            if entry.get("role"):
+                from nautobot.extras.models import Role
+
+                vlan.role = Role.objects.get(name=entry["role"])
             self._save(vlan, "vlans", entry.get("custom_fields"))
             vlan.locations.add(root)
             self._vlans[entry["vid"]] = vlan
@@ -250,6 +259,12 @@ class Executor:
                 from nautobot.dcim.models import Platform
 
                 device.platform = Platform.objects.get(name=entry["platform"])
+            if entry.get("tenant"):
+                from nautobot.tenancy.models import Tenant
+
+                device.tenant = Tenant.objects.get(name=entry["tenant"])
+            if entry.get("local_config_context_data"):
+                device.local_config_context_data = entry["local_config_context_data"]
             if entry.get("rack"):
                 device.rack = self._racks[entry["rack"]]
                 if entry.get("position") is not None:
@@ -260,7 +275,6 @@ class Executor:
             self._save(device, "devices", entry.get("custom_fields"))
             self._devices[entry["name"]] = device
             self._apply_components(device, entry.get("_components") or {})
-            self._stamp_components(device)
 
     def _component_manager(self, device, family: str):
         managers = {
@@ -282,7 +296,11 @@ class Executor:
         from nautobot.dcim.models import Interface
 
         link_pass: list[tuple[str, dict]] = []
-        for family, buckets in components.items():
+        ordered_families = sorted(
+            components, key=lambda f: 0 if f == "rear_ports" else 1
+        )  # rear ports first: FrontPort.rear_port is mandatory at creation
+        for family in ordered_families:
+            buckets = components[family]
             manager = self._component_manager(device, family)
             # 1) removals — the delete verb the old engine lacked
             removals = buckets.get("removals") or []
@@ -308,9 +326,14 @@ class Executor:
                     obj = manager.model(device=device, name=comp["name"])
                     if comp.get("type"):
                         obj.type = comp["type"]
+                    if family == "front_ports" and comp.get("rear_port"):
+                        obj.rear_port = device.rear_ports.get(name=comp["rear_port"])
+                        if comp.get("rear_port_position") is not None:
+                            obj.rear_port_position = comp["rear_port_position"]
                 self._apply_component_attrs(obj, comp)
                 self._save(obj, f"{family}_added")
-                if comp.get("lag") or comp.get("rear_port"):
+                self._apply_tagged_vlans(obj, comp)
+                if comp.get("lag"):
                     link_pass.append((family, comp))
             # 3) overrides on template-born components
             for comp in buckets.get("overrides") or []:
@@ -324,16 +347,14 @@ class Executor:
                 self._apply_component_attrs(obj, comp)
                 obj.validated_save()
                 self.report.add(f"{family}_updated")
-                if comp.get("lag") or comp.get("rear_port"):
+                self._apply_tagged_vlans(obj, comp)
+                if comp.get("lag"):
                     link_pass.append((family, comp))
-        # 4) link pass — lag / rear_port references, after all components exist
+        # 4) link pass — lag references, after all interfaces exist
         for family, comp in link_pass:
             manager = self._component_manager(device, family)
             obj = manager.get(name=comp["name"])
-            if comp.get("lag"):
-                obj.lag = device.interfaces.get(name=comp["lag"])
-            if comp.get("rear_port"):
-                obj.rear_port = device.rear_ports.get(name=comp["rear_port"])
+            obj.lag = device.interfaces.get(name=comp["lag"])
             obj.validated_save()
 
     def _apply_component_attrs(self, obj, comp: dict) -> None:
@@ -343,22 +364,15 @@ class Executor:
         if comp.get("untagged_vlan") is not None:
             obj.untagged_vlan = self._vlans[comp["untagged_vlan"]]
             if not getattr(obj, "mode", None):
-                obj.mode = "access"
-        if comp.get("tagged_vlans"):
-            # m2m set after save; defer via post-attr save in caller then set
-            obj._pending_tagged = [self._vlans[vid] for vid in comp["tagged_vlans"]]
+                # mode is required once VLANs are assigned; the capture side
+                # records the source mode, so a captured template carries it.
+                obj.mode = "tagged" if comp.get("tagged_vlans") else "access"
 
-    def _stamp_components(self, device) -> None:
-        for family in (
-            "interfaces", "console_ports", "console_server_ports", "power_ports",
-            "power_outlets", "front_ports", "rear_ports", "device_bays",
-        ):
-            for comp in self._component_manager(device, family).all():
-                self._stamped(comp, None)
-                comp.save()  # stamp-only write; validation already ran
-                pending = getattr(comp, "_pending_tagged", None)
-                if pending:
-                    comp.tagged_vlans.set(pending)
+    def _apply_tagged_vlans(self, obj, comp: dict) -> None:
+        """m2m write on the SAME saved instance (post-pk); never deferred to a
+        re-fetched queryset instance (review finding: silently dropped)."""
+        if comp.get("tagged_vlans"):
+            obj.tagged_vlans.set([self._vlans[vid] for vid in comp["tagged_vlans"]])
 
     # ----------------------------------------------------------------- IPAM
     def _create_ips(self) -> None:
@@ -372,6 +386,10 @@ class Executor:
                 dns_name=entry.get("dns_name") or "",
                 description=entry.get("description") or "",
             )
+            if entry.get("role"):
+                from nautobot.extras.models import Role
+
+                ip.role = Role.objects.get(name=entry["role"])
             self._save(ip, "ip_addresses", entry.get("custom_fields"))
             self._ips[entry["address"]] = ip
 
@@ -389,7 +407,10 @@ class Executor:
             for flag in constants.IP_ASSIGNMENT_FLAGS:
                 if entry.get(flag):
                     setattr(through, flag, True)
-            self._save(through, "ip_assignments")
+            # Through model has no custom-field support -> no stamp; rows
+            # cascade with the device/IP on teardown.
+            through.validated_save()
+            self.report.add("ip_assignments")
 
     def _set_primary_ips(self) -> None:
         for entry in self.plan.get("primary_ips", []):

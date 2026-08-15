@@ -31,7 +31,8 @@ def run_preflight(spec: SiteSpec, pmap: ParamMap, seeds: Seeds, resolved_plan: d
     _check_custom_fields(spec)
     _check_parent_location(spec, seeds)
     _check_name_collisions(resolved_plan)
-    _check_supernets(pmap, seeds)
+    _check_supernets(pmap, seeds, resolved_plan)
+    _check_stamp_coverage(resolved_plan)
     notes.append("preflight passed")
     return notes
 
@@ -114,30 +115,34 @@ def _check_parent_location(spec: SiteSpec, seeds: Seeds) -> None:
 
 
 def _check_name_collisions(resolved_plan: dict) -> None:
-    """Resolved names are exact — check them all (stronger than the retired
-    codegen, which could only check simple substitutions)."""
-    from nautobot.dcim.models import Device, Rack, RackGroup
+    """Only GLOBALLY-unique identities can collide with existing objects.
+
+    Devices/racks/rack groups are unique per (location/tenant/group, name)
+    and every location this deployment creates is new, so those cannot
+    collide with other sites (review finding: a global name check wrongly
+    blocked deploys over the golden site's own non-site-coded names).
+    """
     from nautobot.ipam.models import VLANGroup
 
-    for family, model in (
-        ("devices", Device),
-        ("racks", Rack),
-        ("rack_groups", RackGroup),
-    ):
-        for obj in resolved_plan.get(family, []):
-            if model.objects.filter(name=obj["name"]).exists():
-                _fail(
-                    f"{model.__name__} named {obj['name']!r} already exists — "
-                    "deploying would collide (wrong site code, or already deployed?)"
-                )
     for group in resolved_plan.get("vlan_groups", []):
         if VLANGroup.objects.filter(name=group["name"]).exists():
             _fail(f"VLANGroup {group['name']!r} already exists")
 
 
-def _check_supernets(pmap: ParamMap, seeds: Seeds) -> None:
+def _check_supernets(pmap: ParamMap, seeds: Seeds, resolved_plan: dict) -> None:
     from nautobot.ipam.models import Prefix
 
+    # Scope the overlap scan to the namespaces this plan writes into, and
+    # allow nesting under Container-type aggregates (that is what containers
+    # are FOR); fail on Network/Pool overlaps and equal/more-specific
+    # containment (review finding: a blanket overlap check made deployment
+    # impossible on any instance with a normal aggregate hierarchy).
+    plan_namespaces = {p["namespace"] for p in resolved_plan.get("prefixes", [])}
+    existing = list(
+        Prefix.objects.filter(namespace__name__in=plan_namespaces).values_list(
+            "network", "prefix_length", "type", "namespace__name"
+        )
+    )
     for entry in pmap.supernets:
         source = ipaddress.ip_network(entry["source"])
         try:
@@ -153,12 +158,50 @@ def _check_supernets(pmap: ParamMap, seeds: Seeds) -> None:
                 f"supernet {source} it replaces"
             )
         # Overlap scan in Python: avoids version-specific ORM net filters.
-        for network, prefix_length in Prefix.objects.all().values_list(
-            "network", "prefix_length"
-        ):
-            existing = ipaddress.ip_network(f"{network}/{prefix_length}", strict=False)
-            if existing.version == target.version and target.overlaps(existing):
-                _fail(
-                    f"supernet {target} for seed {entry['seed']} overlaps existing "
-                    f"prefix {existing} — choose unallocated space"
-                )
+        for network, prefix_length, prefix_type, namespace in existing:
+            other = ipaddress.ip_network(f"{network}/{prefix_length}", strict=False)
+            if other.version != target.version or not target.overlaps(other):
+                continue
+            container = str(prefix_type or "").lower() == "container"
+            nests_inside = target.subnet_of(other) and target != other
+            if container and nests_inside:
+                continue  # aggregates are where new site supernets belong
+            _fail(
+                f"supernet {target} for seed {entry['seed']} overlaps existing "
+                f"prefix {other} (type={prefix_type or 'network'}, namespace="
+                f"{namespace}) — choose unallocated space"
+            )
+
+
+# Content types the executor stamps; the provisioned_from custom field must
+# be enabled for each or the deploy would plant CF data validation rejects.
+STAMPED_CONTENT_TYPES = (
+    "dcim.location",
+    "dcim.rackgroup",
+    "dcim.rack",
+    "dcim.powerpanel",
+    "dcim.powerfeed",
+    "dcim.device",
+    "dcim.cable",
+    "ipam.vlangroup",
+    "ipam.vlan",
+    "ipam.prefix",
+    "ipam.ipaddress",
+)
+
+
+def _check_stamp_coverage(resolved_plan: dict) -> None:
+    from nautobot.extras.models import CustomField
+
+    cf = CustomField.objects.filter(key=PROVISIONED_FROM_FIELD).first()
+    if cf is None:
+        return  # existence already failed in _check_custom_fields
+    enabled = {
+        f"{ct.app_label}.{ct.model}" for ct in cf.content_types.all()
+    }
+    missing = [label for label in STAMPED_CONTENT_TYPES if label not in enabled]
+    if missing:
+        _fail(
+            f"custom field {PROVISIONED_FROM_FIELD!r} is not enabled for: "
+            f"{', '.join(missing)} — see the lab runbook setup step"
+        )

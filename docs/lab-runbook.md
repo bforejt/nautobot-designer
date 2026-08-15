@@ -23,12 +23,11 @@ In the composer repo:
 
 1. **Git repository data source** → this repo, provides *jobs*. Sync, then
    enable the four jobs (Capture / Deploy / Verify / Teardown).
-2. **Custom field** `provisioned_from` (type: text), assigned to the content
-   types the deploy job stamps: dcim | location, rack group, rack, power
-   panel, power feed, device, interface, console port, console server port,
-   power port, power outlet, front port, rear port, device bay, cable;
-   ipam | VLAN group, VLAN, prefix, IP address, IP address to interface.
-   Deploy preflight refuses to run without it.
+2. **Custom field** `provisioned_from` (type: text), assigned to exactly the
+   content types the deploy job stamps (components/through-rows cascade and
+   are not stamped): dcim | location, rack group, rack, power panel, power
+   feed, device, cable; ipam | VLAN group, VLAN, prefix, IP address.
+   Deploy preflight verifies both existence and this coverage.
 3. (Optional but recommended) a dedicated job queue for deploy/teardown.
 
 ## 3. Build the golden fixture site
@@ -48,10 +47,14 @@ VLANs, removed template interface, LAG, role-flagged IP, OOB namespace,
    (For the first pass, the blessed equivalent is already committed at
    `templates/branch-small/`.)
 2. **Deploy Standard Site** — template `branch-small`, site code `AUS01`,
-   site name `Austin Branch`, parent = any location of type `Region` (create
-   one) — or adjust `_meta.source.parent_location_type` in the template,
-   supernets `{"supernet_1": "10.20.0.0/16"}`. **Dry run first** (default):
-   review `resolved-plan-aus01.json`, then re-run with dry run unchecked.
+   site name `Austin Branch`, parent = `South Central` (the Region the
+   fixture creates), supernets `{"supernet_1": "10.20.0.0/16"}`.
+   **Dry run first** (default): review `resolved-plan-aus01.json`, then
+   re-run with dry run unchecked.
+   Note: the committed template carries an EMPTY DeviceType fingerprint
+   (preflight skips the drift check). After your first capture run, replace
+   `templates/branch-small/` with the real capture output — gate 4 depends
+   on it, and a captured spec is the only fully-verifiable template.
 3. **Verify Deployed Site** — location `Austin Branch`, template
    `branch-small`, site code `AUS01`, same supernets. Pass = 0 differences.
 4. **Deploy a second site** (`HOU01`, different supernet) — both must coexist

@@ -88,20 +88,20 @@ class ParamMap:
                 f"template.id {self.template_id!r} must be a lowercase slug "
                 "(it becomes a Python module and job class name)"
             )
-        # Quoting contract (escape.py): generated Jinja may not contain double
-        # quotes, and these map values flow into Placeholders verbatim.
-        for label, value in [("rules.vlan_group_name", self.vlan_group_name)] + [
-            (f"name_patterns[{i}].replace", rule.get("replace", ""))
-            for i, rule in enumerate(self.name_patterns)
-        ]:
-            if '"' in value:
-                raise ParamMapError(f"{label} may not contain double quotes")
         seeds = [s.get("seed") for s in self.supernets]
         if len(seeds) != len(set(seeds)):
             raise ParamMapError("duplicate supernet seed names")
+        import ipaddress as _ip
+
         for entry in self.supernets:
             if not entry.get("seed") or not entry.get("source"):
                 raise ParamMapError(f"malformed supernet entry: {entry!r}")
+            try:
+                _ip.ip_network(entry["source"])
+            except ValueError as err:
+                raise ParamMapError(
+                    f"supernet source {entry['source']!r}: {err}"
+                ) from err
             if not re.fullmatch(r"[a-z][a-z0-9_]*", entry["seed"]):
                 raise ParamMapError(
                     f"seed {entry['seed']!r} must be a lowercase identifier "

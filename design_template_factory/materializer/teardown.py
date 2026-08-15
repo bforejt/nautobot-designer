@@ -47,13 +47,11 @@ def teardown(stamp: str, *, dryrun: bool, logger=None) -> TeardownReport:
         ("cables", Cable),
         ("devices", Device),
         ("ip_addresses", IPAddress),
-        ("prefixes", Prefix),
         ("vlans", VLAN),
         ("vlan_groups", VLANGroup),
         ("power_feeds", PowerFeed),
         ("power_panels", PowerPanel),
         ("racks", Rack),
-        ("rack_groups", RackGroup),
     ]
 
     report = TeardownReport(stamp=stamp, dryrun=dryrun)
@@ -66,6 +64,32 @@ def teardown(stamp: str, *, dryrun: bool, logger=None) -> TeardownReport:
                 report.details.append(f"{family}: {obj}")
             if objects:
                 queryset.delete()
+
+        # Prefixes: per-instance, most-specific first — bulk delete trips
+        # PROTECT on parent-child linkage (review finding).
+        prefixes = sorted(
+            _stamped(Prefix, stamp), key=lambda p: p.prefix_length, reverse=True
+        )
+        report.counts["prefixes"] = len(prefixes)
+        for prefix in prefixes:
+            report.details.append(f"prefixes: {prefix}")
+            prefix.delete()
+
+        # Rack groups: children before parents.
+        groups = list(_stamped(RackGroup, stamp))
+        report.counts["rack_groups"] = len(groups)
+        remaining = {g.pk: g for g in groups}
+        while remaining:
+            leaves = [
+                g for g in remaining.values()
+                if not any(o.parent_id == g.pk for o in remaining.values())
+            ]
+            if not leaves:
+                raise RuntimeError("rack_group deletion could not find a leaf")
+            for group in leaves:
+                report.details.append(f"rack_groups: {group}")
+                group.delete()
+                remaining.pop(group.pk)
 
         locations = sorted(
             _stamped(Location, stamp),

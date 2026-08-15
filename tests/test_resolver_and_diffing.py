@@ -4,6 +4,8 @@ import copy
 
 import pytest
 
+from design_template_factory.params import ParamMap, ParamMapError
+
 from design_template_factory.materializer.diffing import diff_deployment, normalize
 from design_template_factory.materializer.resolver import ResolveError, Seeds, resolve
 
@@ -136,3 +138,61 @@ class TestDiffing:
         as_text = str(norm)
         assert "provisioned_from" not in as_text
         assert "None" not in as_text
+
+
+class TestReviewRegressions:
+    def test_vrfs_refused(self, spec_dict, param_map):
+        from design_template_factory.spec import SiteSpec
+
+        spec_dict["vrfs"] = [{"name": "CORP", "rd": "65000:1"}]
+        with pytest.raises(ResolveError, match="vrfs"):
+            resolve(SiteSpec.from_dict(spec_dict), param_map, SEEDS)
+
+    def test_power_feed_cable_endpoint_renamed_with_feed(self, spec_dict, param_map):
+        from design_template_factory.spec import SiteSpec
+
+        spec_dict["power_feeds"][0]["name"] = "DAL01-FEED-A"
+        spec_dict["cables"][1]["b"][2] = "DAL01-FEED-A"
+        plan = resolve(SiteSpec.from_dict(spec_dict), param_map, SEEDS)
+        assert plan["power_feeds"][0]["name"] == "AUS01-FEED-A"
+        assert plan["cables"][1]["b"] == ["AUS01-PP-1", "power_feeds", "AUS01-FEED-A"]
+
+    def test_resolved_name_collision_detected(self, spec_dict):
+        from design_template_factory.spec import SiteSpec
+
+        pmap = ParamMap.from_dict(
+            {
+                "schema": "1.0",
+                "template": {"id": "branch-small", "source_site_code": "DAL01"},
+                "supernets": [{"seed": "supernet_1", "source": "10.10.0.0/16"}],
+                "rules": {"name_patterns": [{"pattern": "(?i)DAL01", "replace": "{{ site_code }}"}]},
+            }
+        )
+        spec_dict["devices"][1]["name"] = "dal01-SW1"  # collapses onto DAL01-SW1
+        for entry in spec_dict["ip_assignments"] + spec_dict["primary_ips"]:
+            if entry["device"] == "DAL01-SW2":
+                entry["device"] = "dal01-SW1"
+        for cable in spec_dict["cables"]:
+            for end in ("a", "b"):
+                if cable[end][0] == "DAL01-SW2":
+                    cable[end][0] = "dal01-SW1"
+        with pytest.raises(ResolveError, match="same\\s+identity|same identity"):
+            resolve(SiteSpec.from_dict(spec_dict), pmap, SEEDS)
+
+    def test_bad_supernet_cidr_rejected_at_map_load(self):
+        with pytest.raises(ParamMapError, match="host bits"):
+            ParamMap.from_dict(
+                {
+                    "schema": "1.0",
+                    "template": {"id": "x", "source_site_code": "DAL01"},
+                    "supernets": [{"seed": "supernet_1", "source": "10.10.1.5/16"}],
+                    "rules": {},
+                }
+            )
+
+    def test_rack_group_out_of_spec_parent_detected(self, spec_dict):
+        from design_template_factory.spec import SiteSpec
+
+        spec_dict["rack_groups"][0]["parent"] = "CAMPUS-GROUP"
+        problems = SiteSpec.from_dict(spec_dict).validate()
+        assert any("CAMPUS-GROUP" in p for p in problems)

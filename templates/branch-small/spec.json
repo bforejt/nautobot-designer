@@ -54,7 +54,7 @@
       {
         "manufacturer": "FixtureNet",
         "model": "FX-48",
-        "template_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        "template_fingerprint": ""
       }
     ],
     "platforms": [],
@@ -102,7 +102,8 @@
       "rack_group": "DAL01-MDF",
       "status": "Active",
       "u_height": 42,
-      "custom_fields": {}
+      "custom_fields": {},
+      "width": 19
     },
     {
       "name": "R2",
@@ -110,7 +111,8 @@
       "rack_group": "DAL01-MDF",
       "status": "Active",
       "u_height": 42,
-      "custom_fields": {}
+      "custom_fields": {},
+      "width": 19
     }
   ],
   "power_panels": [
@@ -127,7 +129,11 @@
       "power_panel": "DAL01-PP-1",
       "status": "Active",
       "voltage": 120,
-      "custom_fields": {}
+      "custom_fields": {},
+      "type": "primary",
+      "supply": "ac",
+      "phase": "single-phase",
+      "amperage": 20
     }
   ],
   "vlan_groups": [],
@@ -151,13 +157,15 @@
       "prefix": "10.10.0.0/24",
       "namespace": "Global",
       "status": "Active",
-      "custom_fields": {}
+      "custom_fields": {},
+      "type": "network"
     },
     {
       "prefix": "10.10.10.0/24",
       "namespace": "Global",
       "status": "Active",
-      "custom_fields": {}
+      "custom_fields": {},
+      "type": "network"
     }
   ],
   "devices": [
@@ -194,7 +202,8 @@
               "tagged_vlans": [
                 20
               ],
-              "lag": "Po1"
+              "lag": "Po1",
+              "mode": "tagged"
             }
           ]
         }

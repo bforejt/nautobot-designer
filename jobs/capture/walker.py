@@ -147,7 +147,18 @@ class SiteWalker:
         location_ids = list(self._location_paths)
         groups, racks = [], []
         group_names: set[str] = set()
+        site_group_pks = set(
+            RackGroup.objects.filter(location__in=location_ids).values_list("pk", flat=True)
+        )
         for group in RackGroup.objects.filter(location__in=location_ids).order_by("name"):
+            if group.parent_id is not None and group.parent_id not in site_group_pks:
+                self._lint(
+                    "error",
+                    "cross-site-parent",
+                    "rack group's parent lies outside the captured subtree — "
+                    "restructure or descope before blessing",
+                    group.name,
+                )
             if group.name in group_names:
                 self._lint(
                     "error",
@@ -218,6 +229,14 @@ class SiteWalker:
             power_panel__location__in=location_ids
         ).order_by("name"):
             self._feed_pks.add(feed.pk)
+            if self.site_code.lower() not in feed.name.lower():
+                self._lint(
+                    "info",
+                    "non-site-coded-name",
+                    "power feed name does not embed the site code; clones keep "
+                    "the name (feeds are scoped by their panel)",
+                    feed.name,
+                )
             feeds.append(
                 {
                     "name": feed.name,

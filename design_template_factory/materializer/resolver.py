@@ -45,6 +45,11 @@ class Resolver:
         problems = spec.validate()
         if problems:
             raise ResolveError("template spec invalid: " + "; ".join(problems))
+        if spec.entries("vrfs"):
+            raise ResolveError(
+                "vrfs are out of scope in v1 — remove them from the template "
+                "(capture lints and skips them)"
+            )
         seeds.validate_against(pmap)
         self.spec = spec
         self.pmap = pmap
@@ -211,16 +216,50 @@ class Resolver:
             entry["b"] = self._endpoint(cable["b"])
             plan["cables"].append(entry)
 
+        self._assert_resolved_uniqueness(plan)
         return plan
+
+    @staticmethod
+    def _assert_resolved_uniqueness(plan: dict) -> None:
+        """Patterns (e.g. case-insensitive) can collapse distinct source names
+        into one resolved name — silent object overwrites at execute time.
+        Fail loudly here instead (review finding)."""
+        checks = [
+            ("locations", lambda o: o["path"]),
+            ("rack_groups", lambda o: o["name"]),
+            ("racks", lambda o: o["name"]),
+            ("power_panels", lambda o: o["name"]),
+            ("power_feeds", lambda o: (o["power_panel"], o["name"])),
+            ("devices", lambda o: o["name"]),
+            ("ip_addresses", lambda o: o["address"]),
+        ]
+        for family, key in checks:
+            seen: dict = {}
+            for obj in plan.get(family, []):
+                identity = key(obj)
+                if identity in seen:
+                    raise ResolveError(
+                        f"{family}: two template objects resolve to the same "
+                        f"identity {identity!r} — adjust name patterns or "
+                        "source names"
+                    )
+                seen[identity] = obj
 
     def _endpoint(self, endpoint: list) -> list:
         owner, family, component = endpoint
-        # Power-feed endpoints are owned by panels; everything else by devices.
+        # Power-feed endpoints are owned by panels, and the FEED itself is a
+        # renamed created object — rename both (review finding: un-renamed
+        # feed names broke cable lookup). Device-owned component names are
+        # template-born and never renamed.
+        if family == "power_feeds":
+            return [self._name(owner), family, self._name(component)]
         return [self._name(owner), family, component]
 
 
 def resolve(spec: SiteSpec, pmap: ParamMap, seeds: Seeds) -> dict:
     try:
         return Resolver(spec, pmap, seeds).resolve()
-    except RewriteError as err:
+    except (RewriteError, ValueError) as err:
+        if isinstance(err, ResolveError):
+            raise
         raise ResolveError(str(err)) from err

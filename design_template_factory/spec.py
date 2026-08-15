@@ -146,6 +146,14 @@ class SiteSpec:
                         f"location path {obj['location']!r}"
                     )
 
+        group_names = {g.get("name") for g in self.entries("rack_groups")}
+        for group in self.entries("rack_groups"):
+            if group.get("parent") and group["parent"] not in group_names:
+                problems.append(
+                    f"rack_group {group.get('name')!r} parent {group['parent']!r} "
+                    "is not in the spec (out-of-subtree parent?)"
+                )
+
         panel_names = {p.get("name") for p in self.entries("power_panels")}
 
         for assignment in self.entries("ip_assignments"):
