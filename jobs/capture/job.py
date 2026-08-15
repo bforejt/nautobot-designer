@@ -46,7 +46,7 @@ class CaptureSiteTemplate(Job):
         name = "Capture Site Template"
         description = (
             "Walk a fully-built location subtree and export it as a "
-            "site-spec JSON for the design-template-factory pipeline"
+            "site-spec JSON for the nautobot-designer pipeline"
         )
         has_sensitive_variables = False
         read_only = True

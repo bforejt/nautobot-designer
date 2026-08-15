@@ -1,4 +1,4 @@
-"""nautobot-design-template-factory.
+"""nautobot-designer.
 
 Pure-Python core of the capture-to-design pipeline
 (docs/capture-to-design-plan.md):

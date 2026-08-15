@@ -11,10 +11,10 @@ In the composer repo:
    iteration):
 
    ```
-   nautobot-design-template-factory @ git+https://github.com/bforejt/nautobot-design-template-factory.git
+   nautobot-designer @ git+https://github.com/bforejt/nautobot-designer.git
    ```
 
-   (or `pip install -e /source/nautobot-design-template-factory` in a dev
+   (or `pip install -e /source/nautobot-designer` in a dev
    override — the library has no Nautobot dependency of its own.)
 
 2. Rebuild and start: `docker compose build && docker compose up -d`.

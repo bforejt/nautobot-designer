@@ -1,4 +1,4 @@
-"""Jobs package for nautobot-design-template-factory.
+"""Jobs package for nautobot-designer.
 
 Four jobs implement the approved architecture
 (docs/implementation-approach-decision.md):

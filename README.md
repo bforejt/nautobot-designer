@@ -1,4 +1,4 @@
-# nautobot-design-template-factory
+# nautobot-designer
 
 Turn a fully-built Nautobot location into a blessed, parameterized site
 template — then stamp out new sites (locations, racks, devices, interfaces,
